@@ -1,56 +1,17 @@
 version: "3"
 
-networks:
-  private_network:
-    ipam:
-      driver: default
-      config:
-        - subnet: 10.2.0.0/24
-
 services:
   unbound:
+    depends_on: [vpn]
     image: "mvance/unbound:latest"
     container_name: unbound
     restart: unless-stopped
     hostname: "unbound"
     volumes:
       - "./unbound:/opt/unbound/etc/unbound/"
-    networks:
-      private_network:
-        ipv4_address: 10.2.0.200
-
-  wireguard:
-    depends_on: [unbound, pihole]
-    image: linuxserver/wireguard
-    container_name: wireguard
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Los_Angeles # Change to your timezone
-      - SERVERPORT=51820
-      #- SERVERURL=my.ddns.net #optional - For use with DDNS (Uncomment to use)
-      - PEERS=1 # How many peers to generate for you (clients)
-      - PEERDNS=10.2.0.100 # Set it to point to pihole
-      - INTERNAL_SUBNET=10.6.0.0
-      
-    volumes:
-      - ./wireguard:/config
-      - /lib/modules:/lib/modules
     ports:
-      - "51820:51820/udp"
-    dns:
-      - 10.2.0.100 # Points to pihole
-      - 10.2.0.200 # Points to unbound
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-
-    restart: unless-stopped
-    networks:
-      private_network:
-        ipv4_address: 10.2.0.3
+      - "5053:53/udp"
+    network_mode: "service:vpn"
 
   pihole:
     depends_on: [unbound]
@@ -60,13 +21,12 @@ services:
     hostname: pihole
     dns:
       - 127.0.0.1
-      - 10.2.0.200 # Points to unbound
     environment:
-      TZ: "America/Los_Angeles"
+      TZ: 'EST5EDT'
       WEBPASSWORD: "" # Blank password - Can be whatever you want.
-      ServerIP: 10.1.0.100 # Internal IP of pihole
-      DNS1: 10.2.0.200 # Unbound IP
-      DNS2: 10.2.0.200 # If we don't specify two, it will auto pick google.
+      ServerIP: 127.0.0.1 # Internal IP of pihole
+      DNS1: 127.0.0.1#5053 # Unbound IP
+      DNS2: 127.0.0.1#5053 # If we don't specify two, it will auto pick google.
     # Volumes store your data between container upgrades
     volumes:
       - "./etc-pihole/:/etc/pihole/"
@@ -75,6 +35,32 @@ services:
     #   https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
     cap_add:
       - NET_ADMIN
+    network_mode: "host"
+    
+  vpn:
+    image: dperson/openvpn-client
+    # cap_add, security_opt, and volume required for the image to function
+    cap_add:
+      - net_admin
+    environment:
+      TZ: 'EST5EDT'
     networks:
-      private_network:
-        ipv4_address: 10.2.0.100
+      - default
+    # if using '-d' or 'DNS' you can't enable the `read_only: true` option
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    restart: unless-stopped
+    security_opt:
+      - label:disable
+    stdin_open: true
+    tty: true
+    volumes:
+      - /dev/net:/dev/net:z
+      - ./vpn:/vpn
+    # Put .ovpn configuration file in the /vpn directory (in "volumes:" above or
+    # launch using the command line arguments, IE pick one:
+    #  - ./vpn:/vpn
+    # command: 'server;user;password[;port]'
+    
